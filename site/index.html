@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chart Monitor</title>
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,sans-serif;background:#0d0f14;color:#e8eaf0;height:100vh;overflow:hidden;}
+body.light{background:#f0f2f8;color:#1a1e2a;}
+body.light .card{background:#ffffff;border-color:#d0d5e8;}
+body.light .card-header{border-color:#d0d5e8;background:#f8f9fc;}
+body.light select{background:#f0f2f8;color:#1a1e2a;border-color:#d0d5e8;}
+body.light header{background:#ffffff;border-color:#d0d5e8;}
+body.light .price{color:#1a1e2a;}
+body.light .stat{color:#4a5270;}
+body.light .stat span{color:#1a1e2a;}
+body.light .clock{color:#1a1e2a;}
+body.light .status{color:#4a5270;}
+header{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:#13161e;border-bottom:1px solid #252a38;height:46px;}
+.logo{font-size:16px;font-weight:700;color:#00d4ff;letter-spacing:2px;}
+.logo span{color:#8b92a8;font-weight:400;}
+.hright{display:flex;align-items:center;gap:10px;}
+.dot{width:8px;height:8px;border-radius:50%;background:#00e676;box-shadow:0 0 6px #00e676;display:inline-block;margin-right:4px;animation:pulse 2s infinite;}
+.dot.off{background:#4a5068;box-shadow:none;animation:none;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.status{font-size:11px;color:#8b92a8;}
+.clock{font-size:12px;color:#e8eaf0;min-width:70px;text-align:right;}
+.btn{border:1px solid #252a38;color:#e8eaf0;padding:5px 12px;border-radius:5px;cursor:pointer;font-size:11px;background:#1a1e2a;transition:all 0.2s;}
+.btn:hover{border-color:#00d4ff;color:#00d4ff;}
+.btn-blue{background:#00d4ff;border:none;color:#000;font-weight:700;}
+.btn-blue:hover{opacity:0.85;}
+.grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:8px;padding:8px;height:calc(100vh - 46px);}
+.card{background:#13161e;border:1px solid #252a38;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:1px solid #252a38;background:#1a1e2a;flex-shrink:0;gap:8px;flex-wrap:wrap;}
+select{background:#0d0f14;border:1px solid #252a38;color:#e8eaf0;padding:3px 8px;border-radius:5px;font-size:13px;font-weight:700;cursor:pointer;outline:none;min-width:90px;}
+.price{font-size:15px;font-weight:700;color:#e8eaf0;}
+.badge{font-size:11px;font-weight:700;padding:2px 6px;border-radius:3px;}
+.up{color:#00e676;background:rgba(0,230,118,0.12);}
+.down{color:#ff4757;background:rgba(255,71,87,0.12);}
+.stat{font-size:10px;color:#8b92a8;}
+.stat span{color:#e8eaf0;}
+.chart-wrap{flex:1;min-height:0;position:relative;}
+.chart-div{position:absolute;inset:0;width:100%;height:100%;}
+.overlay{position:fixed;inset:0;background:#0d0f14;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:999;transition:opacity 0.4s;}
+.overlay.gone{opacity:0;pointer-events:none;}
+.spinner{width:34px;height:34px;border:3px solid #252a38;border-top-color:#00d4ff;border-radius:50%;animation:spin 0.8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ltxt{font-size:12px;color:#8b92a8;}
+.errbr{background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);color:#ff4757;padding:6px 14px;font-size:11px;display:none;margin:0 8px 4px;border-radius:5px;}
+</style>
+</head>
+<body>
+
+<div class="overlay" id="ov">
+  <div class="spinner"></div>
+  <div class="ltxt">Загрузка данных...</div>
+</div>
+
+<header>
+  <div class="logo">CHART<span>MONITOR</span></div>
+  <div class="hright">
+    <div class="status"><span class="dot" id="dot"></span><span id="stxt">Подключение...</span></div>
+    <div class="clock" id="clk">--:--:--</div>
+    <button class="btn" onclick="toggleTheme()">☀ / ☾</button>
+    <button class="btn btn-blue" onclick="refreshAll()">↻ Обновить</button>
+  </div>
+</header>
+
+<div class="errbr" id="err"></div>
+<div class="grid" id="grid"></div>
+
+<script>
+var SHEET_ID = '18x-p2Wtgh607qNDY5GMbHVq8LnwAueCHNk_oo-_ndWc';
+var API_URL = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:json&sheet=PriceLog';
+var DEFAULT_TICKERS = ['AU', 'ARM', 'BA', 'COIN'];
+var COLORS_DARK  = ['#00d4ff', '#7b61ff', '#00e676', '#ff9500'];
+var COLORS_LIGHT = ['#0088cc', '#5533cc', '#00a854', '#cc6600'];
+
+var allData = {};
+var tickers = [];
+var gcharts = [];
+var isDark = true;
+
+google.charts.load('current', {packages: ['corechart']});
+google.charts.setOnLoadCallback(function() {
+  buildGrid();
+  loadData();
+  setInterval(function() {
+    var n = new Date();
+    document.getElementById('clk').textContent =
+      pad(n.getHours()) + ':' + pad(n.getMinutes()) + ':' + pad(n.getSeconds());
+  }, 1000);
+  setInterval(refreshAll, 60000);
+});
+
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+// ===== ПАРСИНГ ДАТЫ =====
+// Google возвращает время в формате Date(2026,3,24,15,0,15)
+// Месяц начинается с 0 (январь=0, апрель=3)
+function parseGoogleDate(v) {
+  if (!v) return null;
+  // Формат Date(yyyy,m,d,h,mm,ss)
+  var match = String(v).match(/Date\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/);
+  if (match) {
+    return new Date(
+      parseInt(match[1]),
+      parseInt(match[2]),
+      parseInt(match[3]),
+      parseInt(match[4]),
+      parseInt(match[5]),
+      parseInt(match[6])
+    );
+  }
+  // Запасной вариант — строка формата "2026-04-24 15:00:15"
+  try {
+    var d = new Date(String(v).replace(' ', 'T'));
+    return isNaN(d.getTime()) ? null : d;
+  } catch(e) { return null; }
+}
+
+function buildGrid() {
+  var g = document.getElementById('grid');
+  g.innerHTML = '';
+  gcharts = [];
+  for (var i = 0; i < 4; i++) {
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML =
+      '<div class="card-header">' +
+        '<select id="sel' + i + '" onchange="onSel(' + i + ')">' +
+          '<option value="">-- тикер --</option>' +
+        '</select>' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<span class="price" id="pr' + i + '">---</span>' +
+          '<span class="badge up" id="ch' + i + '">0.00%</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px;">' +
+          '<span class="stat">Vol:<span id="vo' + i + '"> ---</span></span>' +
+          '<span class="stat">Mid:<span id="mi' + i + '"> ---</span></span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="chart-wrap">' +
+        '<div class="chart-div" id="cd' + i + '"></div>' +
+      '</div>';
+    g.appendChild(card);
+    gcharts.push(new google.visualization.LineChart(document.getElementById('cd' + i)));
+  }
+}
+
+function loadData() {
+  fetch(API_URL)
+    .then(function(r) { return r.text(); })
+    .then(function(text) {
+      var match = text.match(/setResponse\(([\s\S]*)\)/);
+      if (!match) throw new Error('Нет ответа от таблицы');
+      var json = JSON.parse(match[1]);
+      if (!json.table || !json.table.rows) throw new Error('Таблица пустая');
+
+      allData = {};
+      tickers = [];
+
+      for (var k = 0; k < json.table.rows.length; k++) {
+        var row = json.table.rows[k];
+        if (!row.c || !row.c[1] || !row.c[1].v) continue;
+
+        var tk   = row.c[1].v;
+        var last = row.c[2] ? parseFloat(row.c[2].v) || 0 : 0;
+        var mid  = row.c[3] ? parseFloat(row.c[3].v) || 0 : 0;
+        var chg  = row.c[4] ? parseFloat(row.c[4].v) || 0 : 0;
+        var vol  = row.c[5] ? parseFloat(row.c[5].v) || 0 : 0;
+
+        // Парсим дату — Google возвращает Date(yyyy,m,d,h,mm,ss)
+        var tsRaw = row.c[0] ? row.c[0].v : null;
+        var ts = parseGoogleDate(tsRaw);
+        if (!tk || !last || !ts) continue;
+
+        if (!allData[tk]) { allData[tk] = []; tickers.push(tk); }
+        allData[tk].push({ts: ts, last: last, mid: mid, chg: chg, vol: vol});
+      }
+
+      tickers.sort();
+      fillSelects();
+      for (var i = 0; i < 4; i++) {
+        var sel = document.getElementById('sel' + i);
+        if (sel.value) drawChart(i, sel.value);
+      }
+      setOk(true, tickers.length + ' тикеров загружено');
+      hideOverlay();
+    })
+    .catch(function(e) {
+      console.error(e);
+      setOk(false, e.message);
+      hideOverlay();
+    });
+}
+
+function fillSelects() {
+  for (var i = 0; i < 4; i++) {
+    var sel = document.getElementById('sel' + i);
+    var cur = sel.value || DEFAULT_TICKERS[i] || '';
+    sel.innerHTML = '<option value="">-- тикер --</option>';
+    for (var j = 0; j < tickers.length; j++) {
+      var opt = document.createElement('option');
+      opt.value = tickers[j];
+      opt.textContent = tickers[j];
+      if (tickers[j] === cur) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (!sel.value && DEFAULT_TICKERS[i]) sel.value = DEFAULT_TICKERS[i];
+  }
+}
+
+function drawChart(idx, tk) {
+  var data = allData[tk];
+  if (!data || !data.length) { gcharts[idx].clearChart(); return; }
+
+  var sorted = data.slice().sort(function(a,b){ return a.ts - b.ts; });
+
+  var dt = new google.visualization.DataTable();
+  dt.addColumn('datetime', 'Время');
+  dt.addColumn('number', tk);
+  for (var i = 0; i < sorted.length; i++) {
+    dt.addRow([sorted[i].ts, sorted[i].last]);
+  }
+
+  var bg    = isDark ? '#13161e' : '#ffffff';
+  var grid  = isDark ? '#1e2235' : '#e8ebf4';
+  var txt   = isDark ? '#8b92a8' : '#4a5270';
+  var color = isDark ? COLORS_DARK[idx] : COLORS_LIGHT[idx];
+
+  gcharts[idx].draw(dt, {
+    backgroundColor: bg,
+    colors: [color],
+    legend: {position: 'none'},
+    hAxis: {
+      textStyle: {color: txt, fontSize: 10},
+      gridlines: {color: grid},
+      minorGridlines: {color: 'transparent'},
+      format: 'HH:mm',
+    },
+    vAxis: {
+      textStyle: {color: txt, fontSize: 10},
+      gridlines: {color: grid},
+      minorGridlines: {color: 'transparent'},
+      format: '#,###.##',
+    },
+    chartArea: {left: 60, top: 6, right: 10, bottom: 30, width: '100%', height: '100%'},
+    lineWidth: 2,
+    pointSize: 0,
+    curveType: 'none',
+    crosshair: {trigger: 'both', color: isDark ? '#4a5068' : '#9098b0'},
+    enableInteractivity: true,
+  });
+
+  var last = sorted[sorted.length - 1];
+  document.getElementById('pr' + idx).textContent = '$' + last.last.toFixed(2);
+  var pct = (last.chg * 100).toFixed(2);
+  var cel = document.getElementById('ch' + idx);
+  cel.textContent = (last.chg >= 0 ? '+' : '') + pct + '%';
+  cel.className = 'badge ' + (last.chg >= 0 ? 'up' : 'down');
+  document.getElementById('vo' + idx).textContent = ' ' + fmtVol(last.vol);
+  document.getElementById('mi' + idx).textContent = ' $' + last.mid.toFixed(3);
+}
+
+function onSel(i) {
+  var v = document.getElementById('sel' + i).value;
+  if (v) drawChart(i, v);
+}
+
+function refreshAll() {
+  document.getElementById('stxt').textContent = 'Обновление...';
+  loadData();
+}
+
+function toggleTheme() {
+  isDark = !isDark;
+  document.body.classList.toggle('light', !isDark);
+  for (var i = 0; i < 4; i++) {
+    var sel = document.getElementById('sel' + i);
+    if (sel.value) drawChart(i, sel.value);
+  }
+}
+
+function setOk(ok, msg) {
+  document.getElementById('dot').className = ok ? 'dot' : 'dot off';
+  document.getElementById('stxt').textContent = ok ? (msg || 'Данные загружены') : 'Ошибка';
+  var e = document.getElementById('err');
+  e.style.display = ok ? 'none' : 'block';
+  if (!ok) e.textContent = '⚠ ' + (msg || 'Ошибка загрузки данных');
+}
+
+function hideOverlay() {
+  var el = document.getElementById('ov');
+  el.classList.add('gone');
+  setTimeout(function(){ el.style.display = 'none'; }, 500);
+}
+
+function fmtVol(v) {
+  if (v >= 1000000) return (v/1000000).toFixed(1) + 'M';
+  if (v >= 1000) return (v/1000).toFixed(0) + 'K';
+  return '' + v;
+}
+</script>
+</body>
+</html>
